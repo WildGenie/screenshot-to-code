@@ -4,7 +4,7 @@ from fastapi import APIRouter, WebSocket
 import openai
 import sentry_sdk
 from codegen.utils import extract_html_content
-from config import ANTHROPIC_API_KEY, IS_PROD, SHOULD_MOCK_AI_RESPONSE
+from config import ANTHROPIC_API_KEY, GOOGLE_API_KEY, IS_PROD, SHOULD_MOCK_AI_RESPONSE
 from custom_types import InputMode
 from llm import (
     Llm,
@@ -12,7 +12,9 @@ from llm import (
     stream_claude_response,
     stream_claude_response_native,
     stream_openai_response,
+    stream_gemini_response,
 )
+from utils import make_json_serializable
 from openai.types.chat import ChatCompletionMessageParam
 from mock_llm import mock_completion
 from typing import Dict, List, Union, cast, get_args
@@ -48,6 +50,9 @@ def write_logs(prompt_messages: List[ChatCompletionMessageParam], completion: st
     # Generate a unique filename using the current timestamp within the logs directory
     filename = datetime.now().strftime(f"{logs_directory}/messages_%Y%m%d_%H%M%S.json")
 
+    # Convert the byte datatype in the prompt to string
+    prompt_messages = make_json_serializable(prompt_messages)
+    
     # Write the messages dict into a new file for each run
     with open(filename, "w") as f:
         f.write(json.dumps({"prompt": prompt_messages, "completion": completion}))
@@ -337,6 +342,19 @@ async def stream_code(websocket: WebSocket):
                     api_key=anthropic_api_key,
                     callback=lambda x: process_chunk(x),
                     model=code_generation_model,
+                )
+                exact_llm_version = code_generation_model
+            elif code_generation_model == Llm.GEMINI_1_5_FLASH:
+                if not GOOGLE_API_KEY:
+                    await throw_error(
+                        "No Google API key found. Please add the environment variable GOOGLE_API_KEY to backend/.env"
+                    )
+                    raise Exception("No Google key")
+
+                completion = await stream_gemini_response(
+                    prompt_messages,  # type: ignore
+                    api_key=GOOGLE_API_KEY,
+                    callback=lambda x: process_chunk(x),
                 )
                 exact_llm_version = code_generation_model
             else:
